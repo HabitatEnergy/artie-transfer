@@ -13,6 +13,7 @@ import (
 	"github.com/artie-labs/transfer/lib/telemetry/metrics/base"
 	"github.com/artie-labs/transfer/lib/webhooks"
 	"github.com/artie-labs/transfer/models"
+	"github.com/artie-labs/transfer/lib/logger"
 	"github.com/artie-labs/transfer/models/event"
 )
 
