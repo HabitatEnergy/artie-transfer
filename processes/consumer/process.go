@@ -13,7 +13,6 @@ import (
 	"github.com/artie-labs/transfer/lib/telemetry/metrics/base"
 	"github.com/artie-labs/transfer/lib/webhooks"
 	"github.com/artie-labs/transfer/models"
-	"github.com/artie-labs/transfer/lib/logger"
 	"github.com/artie-labs/transfer/models/event"
 )
 
@@ -56,13 +55,21 @@ func (p processArgs) process(ctx context.Context, cfg config.Config, inMemDB *mo
 		tags["what"] = "marshall_pk_err"
 		return cdc.TableID{}, fmt.Errorf("cannot unmarshal key %q: %w", string(p.Msg.Key()), err)
 	}
-
 	_event, err := topicConfig.GetEventFromBytes(p.Msg.Value())
 
 	if err != nil {
 		tags["what"] = "marshal_value_err"
 		return cdc.TableID{}, fmt.Errorf("cannot unmarshal event: %w", err)
 	}
+
+	if _event.Operation() == "" {
+		// Debezium heartbeat messages have no operation — skip them.
+		tags["skipped"] = "yes"
+		tags["what"] = "heartbeat"
+		slog.Info("Skipping heartbeat message", "topic", p.Msg.Topic())
+		return cdc.TableID{}, nil
+	}
+
 	slog.Info("about to convert event",
 		"op", string(_event.Operation()),
 		"topic", p.Msg.Topic(),
