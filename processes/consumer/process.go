@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"time"
+	"log/slog"
 
 	"github.com/artie-labs/transfer/lib"
 	"github.com/artie-labs/transfer/lib/artie"
@@ -58,14 +59,22 @@ func (p processArgs) process(ctx context.Context, cfg config.Config, inMemDB *mo
 	}
 
 	_event, err := topicConfig.GetEventFromBytes(p.Msg.Value())
+
 	if err != nil {
 		tags["what"] = "marshal_value_err"
 		return cdc.TableID{}, fmt.Errorf("cannot unmarshal event: %w", err)
 	}
-
+	slog.Info("about to convert event",
+		"op", string(_event.Operation()),
+		"topic", p.Msg.Topic(),
+	)
 	tags["op"] = string(_event.Operation())
 	evt, err := event.ToMemoryEvent(ctx, dest, _event, pkMap, topicConfig.tc, cfg.Mode, cfg.SharedDestinationSettings, p.EncryptionKey, p.Cache)
 	if err != nil {
+		slog.Error("failed to decode event",
+			"payload", string(p.Msg.Value()),
+			"error", err,
+		)
 		tags["what"] = "to_mem_event_err"
 		return cdc.TableID{}, fmt.Errorf("cannot convert to memory event: %w", err)
 	}

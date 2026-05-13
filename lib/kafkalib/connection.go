@@ -6,6 +6,8 @@ import (
 	"crypto/tls"
 	"fmt"
 	"time"
+	"log/slog"
+	"net"
 
 	awsCfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -65,17 +67,36 @@ func (c Connection) ClientOptions(ctx context.Context, brokers []string, awsOptF
 		kgo.SeedBrokers(brokers...),
 		kgo.ConnIdleTimeout(c.timeout),
 	}
+	slog.Info("kafka client options init",
+    slog.Any("brokers", brokers),
+    slog.String("mechanism", string(c.Mechanism())),
+    slog.Bool("disableTLS", c.disableTLS),
+)
 
 	switch c.Mechanism() {
 	case ScramSha512:
+		slog.Info("kafka auth",
+			slog.String("type", "SCRAM-SHA-512"),
+			slog.Bool("username_set", c.username != ""),
+		)
 		mechanism := fgoScram.Auth{
 			User: c.username,
 			Pass: c.password,
 		}.AsSha512Mechanism()
 
 		opts = append(opts, kgo.SASL(mechanism))
-		if !c.disableTLS {
-			opts = append(opts, kgo.Dialer((&tls.Dialer{Config: &tls.Config{}}).DialContext))
+		if c.disableTLS {
+			slog.Info("kafka transport", slog.String("mode", "SASL_PLAINTEXT"))
+
+			opts = append(opts, kgo.Dialer((&net.Dialer{
+				Timeout: c.timeout,
+			}).DialContext))
+		} else {
+			slog.Info("kafka transport", slog.String("mode", "SASL_SSL"))
+
+			opts = append(opts, kgo.Dialer((&tls.Dialer{
+				Config: &tls.Config{},
+			}).DialContext))
 		}
 	case AwsMskIam:
 		awsCfg, err := awsCfg.LoadDefaultConfig(ctx, awsOptFns...)
@@ -96,6 +117,7 @@ func (c Connection) ClientOptions(ctx context.Context, brokers []string, awsOptF
 		// AWS MSK always requires TLS
 		opts = append(opts, kgo.Dialer((&tls.Dialer{Config: &tls.Config{}}).DialContext))
 	case Plain:
+		slog.Info("kafka auth", slog.String("type", "PLAIN"))
 		if c.username != "" && c.password != "" {
 			mechanism := fgoPlain.Auth{
 				User: c.username,
@@ -103,8 +125,18 @@ func (c Connection) ClientOptions(ctx context.Context, brokers []string, awsOptF
 			}.AsMechanism()
 
 			opts = append(opts, kgo.SASL(mechanism))
-			if !c.disableTLS {
-				opts = append(opts, kgo.Dialer((&tls.Dialer{Config: &tls.Config{}}).DialContext))
+			if c.disableTLS {
+				slog.Info("kafka transport", slog.String("mode", "PLAINTEXT"))
+
+				opts = append(opts, kgo.Dialer((&net.Dialer{
+					Timeout: c.timeout,
+				}).DialContext))
+			} else {
+				slog.Info("kafka transport", slog.String("mode", "TLS"))
+
+				opts = append(opts, kgo.Dialer((&tls.Dialer{
+					Config: &tls.Config{},
+				}).DialContext))
 			}
 		} else if !c.disableTLS {
 			// No SASL mechanism, but may still need TLS
