@@ -9,6 +9,7 @@ import (
 	"github.com/artie-labs/transfer/lib/artie"
 	"github.com/artie-labs/transfer/lib/cdc"
 	"github.com/artie-labs/transfer/lib/config"
+	"github.com/artie-labs/transfer/lib/config/constants"
 	"github.com/artie-labs/transfer/lib/destination"
 	"github.com/artie-labs/transfer/lib/telemetry/metrics/base"
 	"github.com/artie-labs/transfer/lib/webhooks"
@@ -50,30 +51,30 @@ func (p processArgs) process(ctx context.Context, cfg config.Config, inMemDB *mo
 
 	tags["database"] = topicConfig.tc.Database
 	tags["schema"] = topicConfig.tc.Schema
-	pkMap, err := topicConfig.GetPrimaryKey(p.Msg.Key(), topicConfig.tc, reservedColumns)
-	if err != nil {
-		tags["what"] = "marshall_pk_err"
-		return cdc.TableID{}, fmt.Errorf("cannot unmarshal key %q: %w", string(p.Msg.Key()), err)
-	}
-	_event, err := topicConfig.GetEventFromBytes(p.Msg.Value())
 
+	_event, err := topicConfig.GetEventFromBytes(p.Msg.Value())
 	if err != nil {
 		tags["what"] = "marshal_value_err"
 		return cdc.TableID{}, fmt.Errorf("cannot unmarshal event: %w", err)
 	}
 
-	if _event.Operation() == "" {
-		// Debezium heartbeat messages have no operation — skip them.
-		tags["skipped"] = "yes"
-		tags["what"] = "heartbeat"
-		slog.Info("Skipping heartbeat message", "topic", p.Msg.Topic())
+	if op := _event.Operation(); op != constants.Create && op != constants.Update && op != constants.Delete && op != constants.Backfill {
+		slog.Info("Skipping message with unrecognized operation (likely a Debezium heartbeat)",
+			"op", string(op),
+			"topic", p.Msg.Topic(),
+			"key", string(p.Msg.Key()),
+			"value", string(p.Msg.Value()),
+		)
+		tags["what"] = "skipped_unrecognized_op"
 		return cdc.TableID{}, nil
 	}
 
-	slog.Info("about to convert event",
-		"op", string(_event.Operation()),
-		"topic", p.Msg.Topic(),
-	)
+	pkMap, err := topicConfig.GetPrimaryKey(p.Msg.Key(), topicConfig.tc, reservedColumns)
+	if err != nil {
+		tags["what"] = "marshall_pk_err"
+		return cdc.TableID{}, fmt.Errorf("cannot unmarshal key %q: %w", string(p.Msg.Key()), err)
+	}
+
 	tags["op"] = string(_event.Operation())
 	evt, err := event.ToMemoryEvent(ctx, dest, _event, pkMap, topicConfig.tc, cfg.Mode, cfg.SharedDestinationSettings, p.EncryptionKey)
 	if err != nil {

@@ -4,8 +4,9 @@ build-transfer:
 login-ecr:
   aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 417844920390.dkr.ecr.us-east-1.amazonaws.com
 
-build-push-x84-service default_tag='artie-transfer-debug':
+build-push-x84-service default_tag='logger-test':
     docker buildx build \
+        --no-cache \
         --platform linux/amd64 \
         -t 417844920390.dkr.ecr.us-east-1.amazonaws.com/habitat/artie-transfer/fork:{{ default_tag }} \
         --push \

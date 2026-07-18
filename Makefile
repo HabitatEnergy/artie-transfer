@@ -24,6 +24,10 @@ generate:
 build:
 	goreleaser build --clean
 
+.PHONY: build-snapshot
+build-snapshot:
+	goreleaser build --clean --snapshot
+
 .PHONY: release
 release:
 	goreleaser release --clean

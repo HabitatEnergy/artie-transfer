@@ -2,10 +2,13 @@ package consumer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/twmb/franz-go/pkg/kerr"
 
 	"github.com/artie-labs/transfer/lib/artie"
 	"github.com/artie-labs/transfer/lib/artie/metrics"
@@ -85,7 +88,8 @@ func StartKafkaConsumer(ctx context.Context, cfg config.Config, inMemDB *models.
 							Error: fmt.Sprintf("Failed to process message: %s", err),
 							Topic: msg.Topic(),
 						})
-						logger.Fatal("Failed to process message", slog.Any("err", err), slog.String("topic", msg.Topic()))
+						slog.Error("Failed to process message, skipping", slog.Any("err", err), slog.String("topic", msg.Topic()), slog.String("value", string(msg.Value())))
+						return nil
 					}
 
 					metrics.EmitIngestionLag(msg, metricsClient, cfg.Mode, kafkaConsumer.GetGroupID(), tableID.Schema, tableID.Table)
@@ -94,16 +98,20 @@ func StartKafkaConsumer(ctx context.Context, cfg config.Config, inMemDB *models.
 					return nil
 				})
 				if err != nil {
-					if fetchErr, ok := kafkalib.IsFetchMessageError(err); ok && db.IsRetryableError(fetchErr.Err, context.DeadlineExceeded) {
-						time.Sleep(500 * time.Millisecond)
-						continue
-					} else {
-						whClient.SendEvent(ctx, webhooks.EventReplicationFailed, webhooks.EventProperties{
-							Error: fmt.Sprintf("Failed to fetch and process message: %s", err),
-							Topic: topic,
-						})
-						logger.Fatal("Failed to fetch and process message", slog.Any("err", err), slog.String("topic", topic))
+					if fetchErr, ok := kafkalib.IsFetchMessageError(err); ok {
+						if db.IsRetryableError(fetchErr.Err, context.DeadlineExceeded) || errors.Is(fetchErr.Err, kerr.OffsetOutOfRange) {
+							if errors.Is(fetchErr.Err, kerr.OffsetOutOfRange) {
+								slog.Warn("Committed offset is out of range (likely expired by retention), franz-go will reset to latest", slog.String("topic", topic), slog.Any("err", fetchErr.Err))
+							}
+							time.Sleep(500 * time.Millisecond)
+							continue
+						}
 					}
+					whClient.SendEvent(ctx, webhooks.EventReplicationFailed, webhooks.EventProperties{
+						Error: fmt.Sprintf("Failed to fetch and process message: %s", err),
+						Topic: topic,
+					})
+					logger.Fatal("Failed to fetch and process message", slog.Any("err", err), slog.String("topic", topic))
 				}
 			}
 		}(topic)
